@@ -35,6 +35,9 @@ enum
 {
   OLED_PAGE_RADIO,
   OLED_PAGE_OTHER,
+  /* Martenz EDITS */
+  OLED_PAGE_BARO,
+  /* Martenz EDITS - end */
   OLED_PAGE_COUNT
 };
 
@@ -52,6 +55,14 @@ static uint32_t prev_sats_counter   = (uint32_t) -1;
 static uint32_t prev_uptime_minutes = (uint32_t) -1;
 static int32_t  prev_voltage        = (uint32_t) -1;
 static int8_t   prev_fix            = (uint8_t)  -1;
+
+/* Martenz edits */
+static int32_t prev_vario = (int) -1;
+#define Vario_AVERAGING_FACTOR 5
+static float Vario_VS[Vario_AVERAGING_FACTOR];
+static int vario_ndx = 0;
+
+/* Martenz Edits - end */
 
 unsigned long OLEDTimeMarker = 0;
 
@@ -311,6 +322,95 @@ static void OLED_other()
   }
 }
 
+  /* Martenz EDITS */
+  // adding Baro and GPS page data
+
+  static void OLED_baro()
+{
+  char buf[16];
+  uint32_t disp_value;
+  uint32_t elev;
+  int32_t vario;
+
+  if (!OLED_display_titles) {
+
+    u8x8->clear();
+
+
+    u8x8->drawString(0, 1, "M (GPS)");
+    u8x8->drawString(11, 1, ACFTS_text);
+    u8x8->drawString(0, 5, "M (Baro)");
+    u8x8->drawString(13, 5, "M/S");
+    u8x8->drawGlyph(13, 7, '.');
+
+    prev_acrfts_counter = (uint32_t)-1;
+    prev_vario = (int32_t)-1;
+
+    for (int i = 0; i < Vario_AVERAGING_FACTOR; i++) {
+        Vario_VS[i] = 0;
+    }
+
+    OLED_display_titles = true;
+  }
+
+  // Traffic count
+  uint32_t acrfts_counter = Traffic_Count();
+  if (prev_acrfts_counter != acrfts_counter) {
+      disp_value = acrfts_counter > 99 ? 99 : acrfts_counter;
+      itoa(disp_value, buf, 10);
+
+      if (disp_value < 10) {
+          strcat_P(buf, PSTR(" "));
+      }
+
+      u8x8->draw2x2String(11, 2, buf);
+      prev_acrfts_counter = acrfts_counter;
+  }
+
+  // gps elevation
+  elev = (int)(round(ThisAircraft.altitude));
+  itoa(elev, buf, 10);
+  u8x8->draw2x2String(1, 2, buf);
+
+  // barometric altitude
+  elev = (int)(round(ThisAircraft.pressure_altitude));
+  itoa(elev, buf, 10);
+  u8x8->draw2x2String(1, 6, buf);
+
+  // barometric vertical speed in dm/s
+  vario = (int)(ThisAircraft.vs * 0.3048 / 60.0 * 10.0) % 10000;  //Vertical Speed FT/MIN to dm/s
+
+  Vario_VS[vario_ndx] = vario;
+  int32_t vario_average = 0;
+  for (int i = 0; i < Vario_AVERAGING_FACTOR; i++) {
+      vario_average += Vario_VS[i];
+  }
+  vario_average /= Vario_AVERAGING_FACTOR;
+
+  if(vario_average < 0 ){
+      vario_average = -vario_average;
+    u8x8->drawString(11,5,"-");
+  }else{
+    u8x8->drawString(11,5,"+");
+  }
+
+  if ( vario_average != prev_vario ) {
+      disp_value = vario_average / 10;
+      disp_value = disp_value > 9 ? 9 : disp_value;
+      u8x8->draw2x2Glyph(11, 6, '0' + disp_value);
+
+      disp_value = vario_average % 10;
+      u8x8->draw2x2Glyph(14, 6, '0' + disp_value);
+      prev_vario = vario_average;
+  }
+
+  vario_ndx = (vario_ndx + 1) % Vario_AVERAGING_FACTOR;
+
+}
+
+  /* Martenz EDITS - end*/
+
+
 void OLED_loop()
 {
   if (u8x8) {
@@ -319,6 +419,9 @@ void OLED_loop()
       {
       case OLED_PAGE_OTHER:
         OLED_other();
+        break;
+      case OLED_PAGE_BARO:
+        OLED_baro();
         break;
       case OLED_PAGE_RADIO:
       default:
