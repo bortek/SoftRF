@@ -331,6 +331,7 @@ static void OLED_other()
   uint32_t disp_value;
   uint32_t elev;
   int32_t vario;
+  int32_t gps_speed;
 
   if (!OLED_display_titles) {
 
@@ -338,7 +339,8 @@ static void OLED_other()
 
 
     u8x8->drawString(0, 1, "M (GPS)");
-    u8x8->drawString(11, 1, ACFTS_text);
+    //u8x8->drawString(11, 1, ACFTS_text);
+    u8x8->drawString(11, 1, "V (GPS)");
     u8x8->drawString(0, 5, "M (Baro)");
     u8x8->drawString(13, 5, "M/S");
     u8x8->drawGlyph(13, 7, '.');
@@ -353,6 +355,7 @@ static void OLED_other()
     OLED_display_titles = true;
   }
 
+  /*
   // Traffic count
   uint32_t acrfts_counter = Traffic_Count();
   if (prev_acrfts_counter != acrfts_counter) {
@@ -366,11 +369,21 @@ static void OLED_other()
       u8x8->draw2x2String(11, 2, buf);
       prev_acrfts_counter = acrfts_counter;
   }
+   */
 
-  // gps elevation
-  elev = (int)(round(ThisAircraft.altitude));
-  itoa(elev, buf, 10);
-  u8x8->draw2x2String(1, 2, buf);
+  // gps elevation and speed
+  if (isValidFix()) {
+    elev = (int)(round(ThisAircraft.altitude));
+    itoa(elev, buf, 10);
+    u8x8->draw2x2String(1, 2, buf);
+    gps_speed = (int)(round(ThisAircraft.speed * 1.852));
+    itoa(gps_speed, buf, 10);
+    u8x8->draw2x2String(11, 2, buf);
+
+  }else{
+    u8x8->drawString(1, 2, "noFix");
+    u8x8->drawString(11, 2, "noFix");
+  }
 
   // barometric altitude
   elev = (int)(round(ThisAircraft.pressure_altitude));
