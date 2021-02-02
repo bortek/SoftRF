@@ -375,9 +375,15 @@ static void OLED_other()
   if (isValidFix()) {
     elev = (int)(round(ThisAircraft.altitude));
     itoa(elev, buf, 10);
+    if (elev < 10) {
+          strcat_P(buf, PSTR(" "));
+      }
     u8x8->draw2x2String(1, 2, buf);
     gps_speed = (int)(round(ThisAircraft.speed * 1.852));
     itoa(gps_speed, buf, 10);
+    if (gps_speed < 10) {
+          strcat_P(buf, PSTR(" "));
+      }
     u8x8->draw2x2String(11, 2, buf);
 
   }else{
@@ -388,6 +394,9 @@ static void OLED_other()
   // barometric altitude
   elev = (int)(round(ThisAircraft.pressure_altitude));
   itoa(elev, buf, 10);
+  if (elev < 10) {
+          strcat_P(buf, PSTR(" "));
+      }
   u8x8->draw2x2String(1, 6, buf);
 
   // barometric vertical speed in dm/s

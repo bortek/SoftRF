@@ -53,7 +53,7 @@ static unsigned long BaroTimeMarker = 0;
 static float prev_pressure_altitude = 0;
 
 // increasing the averaging factor to average more data from sensor form 4 to 20
-#define VS_AVERAGING_FACTOR   20
+#define VS_AVERAGING_FACTOR   10
 static float Baro_VS[VS_AVERAGING_FACTOR];
 static int avg_ndx = 0;
 
