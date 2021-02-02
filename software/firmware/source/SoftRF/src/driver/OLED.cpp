@@ -340,7 +340,7 @@ static void OLED_other()
 
     u8x8->drawString(0, 1, "M (GPS)");
     //u8x8->drawString(11, 1, ACFTS_text);
-    u8x8->drawString(11, 1, "V (GPS)");
+    u8x8->drawString(9, 1, "V (GPS)");
     u8x8->drawString(0, 5, "M (Baro)");
     u8x8->drawString(13, 5, "M/S");
     u8x8->drawGlyph(13, 7, '.');
