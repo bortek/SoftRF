@@ -453,13 +453,14 @@ static void OLED_other()
 
     u8x8->clear();
 
+    u8x8->drawString(0, 0, "ID=");
     u8x8->drawString(12, 0, "%");
-    u8x8->drawGlyph(5, 1, '.');
-    u8x8->drawString(8, 3, "m");
-    u8x8->drawString(8, 5, "km");
-    u8x8->drawString(8, 6, "h");
-    u8x8->drawString(11, 1, ACFTS_text);
-    u8x8->drawString(12, 5, ":ID:");
+    u8x8->drawString(0, 2, "km/h");
+    u8x8->drawString(0, 5, "m (gps)");
+    u8x8->drawString(12, 3, ".");
+    u8x8->drawString(15, 2, "m");
+    u8x8->drawString(15, 3, "s");
+    u8x8->drawString(11, 5, ACFTS_text);
 
     prev_acrfts_counter = (uint32_t)-1;
     prev_vario = (int32_t)-1;
@@ -470,6 +471,10 @@ static void OLED_other()
 
     OLED_display_titles = true;
   }
+
+  // ID 
+  snprintf (buf, sizeof(buf), "%06X", ThisAircraft.addr);
+  u8x8->drawString(3, 0, buf);
 
   // Battery
   int32_t  p_voltage      = (int) ( (1 - (MAX_V*100. - ceil(Battery_voltage()*100.))/(100.*(MAX_V - MIN_V))) * 100.0 );
@@ -483,6 +488,37 @@ static void OLED_other()
     prev_voltage = p_voltage;
   }
 
+    if (isValidFix()) {
+
+  // GPS Speed
+    gps_speed = (int)(round(ThisAircraft.speed * 1.852)); // km/h
+    itoa(gps_speed, buf, 10);
+    // not wrinting speed over 999km/h
+    if (gps_speed > 9 && gps_speed < 100 ){    
+          strcat_P(buf,PSTR(" "));
+    }else if (gps_speed < 10) {
+          strcat_P(buf,PSTR("  "));
+    }
+    u8x8->draw2x2String(0, 3, buf);
+
+    // GPS elevation 
+    elev = (int)(round(ThisAircraft.altitude));
+    itoa(elev, buf, 10);
+    if(elev > 99 && elev < 1000) {
+          strcat_P(buf,PSTR(" "));
+    }else if(elev < 100){
+          strcat_P(buf,PSTR("  "));
+    }else if(elev < 10){
+          strcat_P(buf,PSTR("   "));
+    }
+    u8x8->draw2x2String(0, 6, buf);
+
+  }else{
+    u8x8->drawString(0, 3, "noFix");
+    u8x8->drawString(0, 6, "noFix");
+  }
+
+
   // Vario - barometric vertical speed in dm/s
   vario = (int)(ThisAircraft.vs * 0.3048 / 60.0 * 10.0) % 10000;  //Vertical Speed FT/MIN to dm/s
   Vario_VS[vario_ndx] = vario;
@@ -493,51 +529,21 @@ static void OLED_other()
   vario_average /= Vario_AVERAGING_FACTOR;
   if(vario_average < 0 ){
       vario_average = -vario_average;
-    u8x8->draw2x2String(1,0,"-");
+    u8x8->draw2x2String(8,2,"-");
   }else{
-    u8x8->draw2x2String(1,0,"+");
+    u8x8->draw2x2String(8,2,"+");
   }
   if ( vario_average != prev_vario ) {
       disp_value = vario_average / 10; //back to meters
       disp_value = disp_value > 9 ? 9 : disp_value;
-      u8x8->draw2x2Glyph(3, 0, '0' + disp_value);
+      u8x8->draw2x2Glyph(10, 2, '0' + disp_value);
 
       disp_value = vario_average % 10; //back to meters
-      u8x8->draw2x2Glyph(6, 0, '0' + disp_value);
+      u8x8->draw2x2Glyph(13, 2, '0' + disp_value);
       prev_vario = vario_average;
   }
   vario_ndx = (vario_ndx + 1) % Vario_AVERAGING_FACTOR;
 
-  // GPS elevation 
-  if (isValidFix()) {
-    elev = (int)(round(ThisAircraft.altitude));
-    itoa(elev, buf, 10);
-    if (elev > 999){
-      u8x8->draw2x2String(0, 3, buf);
-    }else if(elev > 99 && elev < 1000) {
-      u8x8->draw2x2String(2, 3, buf);
-    }else if(elev < 100){
-      u8x8->draw2x2String(4, 3, buf);
-    }else if(elev < 10){
-      u8x8->draw2x2String(6, 3, buf);
-    }
-
-  // GPS Speed
-    gps_speed = (int)(round(ThisAircraft.speed * 1.852)); // km/h
-    itoa(gps_speed, buf, 10);
-    // not wrinting speed over 999km/h
-    if (gps_speed > 99 && gps_speed < 1000 ) {          
-          u8x8->draw2x2String(2, 5, buf);
-    }else if (gps_speed > 9 && gps_speed < 100 ){
-          u8x8->draw2x2String(4, 5, buf);
-    }else if (gps_speed < 10) {
-          u8x8->draw2x2String(6, 5, buf);
-    }
-
-  }else{
-    u8x8->drawString(1, 2, "noFix");
-    u8x8->drawString(11, 2, "noFix");
-  }
  
   // Traffic count
   uint32_t acrfts_counter = Traffic_Count();
@@ -549,13 +555,9 @@ static void OLED_other()
           strcat_P(buf, PSTR(" "));
       }
 
-      u8x8->draw2x2String(12, 2, buf);
+      u8x8->draw2x2String(11, 6, buf);
       prev_acrfts_counter = acrfts_counter;
   }
-
-  // ID 
-  snprintf (buf, sizeof(buf), "%06X", ThisAircraft.addr);
-  u8x8->drawString(10, 6, buf);
 
 }
 
