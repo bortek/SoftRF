@@ -36,7 +36,8 @@ enum
   OLED_PAGE_RADIO,
   OLED_PAGE_OTHER,
   /* Martenz EDITS */
-  OLED_PAGE_BARO,
+  OLED_PAGE_3,
+  OLED_PAGE_4,
   /* Martenz EDITS - end */
   OLED_PAGE_COUNT
 };
@@ -61,6 +62,8 @@ static int32_t prev_vario = (int) -1;
 #define Vario_AVERAGING_FACTOR 5
 static float Vario_VS[Vario_AVERAGING_FACTOR];
 static int vario_ndx = 0;
+float MAX_V = 4.2;
+float MIN_V = 3.5;
 
 /* Martenz Edits - end */
 
@@ -99,10 +102,12 @@ const char SATS_text[]     = "SATS";
 const char FIX_text[]      = "FIX";
 const char UPTIME_text[]   = "UPTIME";
 const char BAT_text[]      = "BAT";
+const char BATp_text[]      = "%BAT";
 
 static const uint8_t Dot_Tile[] = { 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00 };
 
-static int OLED_current_page = OLED_PAGE_RADIO;
+//static int OLED_current_page = OLED_PAGE_RADIO;
+static int OLED_current_page = OLED_PAGE_4;
 
 byte OLED_setup() {
 
@@ -317,15 +322,17 @@ static void OLED_other()
     disp_value = voltage % 10;
 
     u8x8->draw2x2Glyph(14, 6, '0' + disp_value);
-
+    
     prev_voltage = voltage;
+
   }
+
 }
 
   /* Martenz EDITS */
   // adding Baro and GPS page data
 
-  static void OLED_baro()
+  static void OLED_page_3()
 {
   char buf[16];
   uint32_t disp_value;
@@ -379,12 +386,16 @@ static void OLED_other()
           strcat_P(buf, PSTR(" "));
       }
     u8x8->draw2x2String(1, 2, buf);
-    gps_speed = (int)(round(ThisAircraft.speed * 1.852));
+    gps_speed = (int)(round(ThisAircraft.speed * 1.852)); // km/h
     itoa(gps_speed, buf, 10);
-    if (gps_speed < 10) {
-          strcat_P(buf, PSTR(" "));
-      }
-    u8x8->draw2x2String(11, 2, buf);
+    // not wrinting speed over 999km/h
+    if (gps_speed > 99 && gps_speed < 1000 ) {          
+          u8x8->draw2x2String(10, 2, buf);
+    }else if (gps_speed > 9 && gps_speed < 100 ){
+          u8x8->draw2x2String(12, 2, buf);
+    }else if (gps_speed < 10) {
+          u8x8->draw2x2String(14, 2, buf);
+    }
 
   }else{
     u8x8->drawString(1, 2, "noFix");
@@ -430,6 +441,125 @@ static void OLED_other()
 
 }
 
+  static void OLED_page_4()
+{
+  char buf[16];
+  uint32_t disp_value;
+  uint32_t elev;
+  int32_t vario;
+  int32_t gps_speed;
+
+  if (!OLED_display_titles) {
+
+    u8x8->clear();
+
+    u8x8->drawString(12, 0, "%");
+    u8x8->drawGlyph(5, 1, '.');
+    u8x8->drawString(8, 3, "m");
+    u8x8->drawString(8, 5, "km");
+    u8x8->drawString(8, 6, "h");
+    u8x8->drawString(11, 1, ACFTS_text);
+    u8x8->drawString(12, 5, ":ID:");
+
+    prev_acrfts_counter = (uint32_t)-1;
+    prev_vario = (int32_t)-1;
+
+    for (int i = 0; i < Vario_AVERAGING_FACTOR; i++) {
+        Vario_VS[i] = 0;
+    }
+
+    OLED_display_titles = true;
+  }
+
+  // Battery
+  int32_t  p_voltage      = (int) ( (1 - (MAX_V*100. - ceil(Battery_voltage()*100.))/(100.*(MAX_V - MIN_V))) * 100.0 );
+  if (prev_voltage != p_voltage) {    
+    itoa(p_voltage, buf, 10);
+    if (p_voltage < 100) {
+     u8x8->drawString(14, 0, buf);
+    }else{
+     u8x8->draw2x2String(13, 0, buf);
+    }
+    prev_voltage = p_voltage;
+  }
+
+  // Vario - barometric vertical speed in dm/s
+  vario = (int)(ThisAircraft.vs * 0.3048 / 60.0 * 10.0) % 10000;  //Vertical Speed FT/MIN to dm/s
+  Vario_VS[vario_ndx] = vario;
+  int32_t vario_average = 0;
+  for (int i = 0; i < Vario_AVERAGING_FACTOR; i++) {
+      vario_average += Vario_VS[i];
+  }
+  vario_average /= Vario_AVERAGING_FACTOR;
+  if(vario_average < 0 ){
+      vario_average = -vario_average;
+    u8x8->draw2x2String(1,0,"-");
+  }else{
+    u8x8->draw2x2String(1,0,"+");
+  }
+  if ( vario_average != prev_vario ) {
+      disp_value = vario_average / 10; //back to meters
+      disp_value = disp_value > 9 ? 9 : disp_value;
+      u8x8->draw2x2Glyph(3, 0, '0' + disp_value);
+
+      disp_value = vario_average % 10; //back to meters
+      u8x8->draw2x2Glyph(6, 0, '0' + disp_value);
+      prev_vario = vario_average;
+  }
+  vario_ndx = (vario_ndx + 1) % Vario_AVERAGING_FACTOR;
+
+  // GPS elevation 
+  if (isValidFix()) {
+    elev = (int)(round(ThisAircraft.altitude));
+    itoa(elev, buf, 10);
+    if (elev > 999){
+      u8x8->draw2x2String(0, 3, buf);
+    }else if(elev > 99 && elev < 1000) {
+      u8x8->draw2x2String(2, 3, buf);
+    }else if(elev < 100){
+      u8x8->draw2x2String(4, 3, buf);
+    }else if(elev < 10){
+      u8x8->draw2x2String(6, 3, buf);
+    }
+
+  // GPS Speed
+    gps_speed = (int)(round(ThisAircraft.speed * 1.852)); // km/h
+    itoa(gps_speed, buf, 10);
+    // not wrinting speed over 999km/h
+    if (gps_speed > 99 && gps_speed < 1000 ) {          
+          u8x8->draw2x2String(2, 5, buf);
+    }else if (gps_speed > 9 && gps_speed < 100 ){
+          u8x8->draw2x2String(4, 5, buf);
+    }else if (gps_speed < 10) {
+          u8x8->draw2x2String(6, 5, buf);
+    }
+
+  }else{
+    u8x8->drawString(1, 2, "noFix");
+    u8x8->drawString(11, 2, "noFix");
+  }
+ 
+  // Traffic count
+  uint32_t acrfts_counter = Traffic_Count();
+  if (prev_acrfts_counter != acrfts_counter) {
+      disp_value = acrfts_counter > 99 ? 99 : acrfts_counter;
+      itoa(disp_value, buf, 10);
+
+      if (disp_value < 10) {
+          strcat_P(buf, PSTR(" "));
+      }
+
+      u8x8->draw2x2String(12, 2, buf);
+      prev_acrfts_counter = acrfts_counter;
+  }
+
+  // ID 
+  snprintf (buf, sizeof(buf), "%06X", ThisAircraft.addr);
+  u8x8->drawString(10, 6, buf);
+
+}
+
+
   /* Martenz EDITS - end*/
 
 
@@ -442,8 +572,11 @@ void OLED_loop()
       case OLED_PAGE_OTHER:
         OLED_other();
         break;
-      case OLED_PAGE_BARO:
-        OLED_baro();
+      case OLED_PAGE_3:
+        OLED_page_3();
+        break;
+      case OLED_PAGE_4:
+        OLED_page_4();
         break;
       case OLED_PAGE_RADIO:
       default:
