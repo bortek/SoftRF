@@ -239,7 +239,7 @@ struct rst_info {
 #define EXCLUDE_GNSS_MTK
 
 #define EXCLUDE_CC13XX
-#define EXCLUDE_LK8EX1
+//#define EXCLUDE_LK8EX1
 
 #define POWER_SAVING_WIFI_TIMEOUT 600000UL /* 10 minutes */
 
