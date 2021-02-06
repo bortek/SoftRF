@@ -454,7 +454,9 @@ static void OLED_other()
     u8x8->clear();
 
     u8x8->drawString(0, 0, "ID=");
-    u8x8->drawString(12, 0, "%");
+     if (hw_info.model == SOFTRF_MODEL_PRIME_MK2 ){
+      u8x8->drawString(12, 0, "%");
+     }
     u8x8->drawString(0, 2, "km/h");
     u8x8->drawString(0, 5, "m (gps)");
     u8x8->drawString(12, 3, ".");
@@ -477,17 +479,19 @@ static void OLED_other()
   u8x8->drawString(3, 0, buf);
 
   // Battery
-  int32_t  p_voltage      = (int) ( (1 - (MAX_V*100. - ceil(Battery_voltage()*100.))/(100.*(MAX_V - MIN_V))) * 100.0 );
-  if (prev_voltage != p_voltage) {    
-    itoa(p_voltage, buf, 10);
-    if (p_voltage < 100) {
-     u8x8->drawString(14, 0, buf);
-    }else{
-     u8x8->draw2x2String(13, 0, buf);
+  if (hw_info.model == SOFTRF_MODEL_PRIME_MK2 ){
+     
+    int32_t  p_voltage      = (int) ( (1 - (MAX_V*100. - ceil(Battery_voltage()*100.))/(100.*(MAX_V - MIN_V))) * 100.0 );
+    if (prev_voltage != p_voltage) {    
+      itoa(p_voltage, buf, 10);
+      if (p_voltage < 100) {
+      u8x8->drawString(14, 0, buf);
+      }else{
+      u8x8->draw2x2String(13, 0, buf);
+      }
+      prev_voltage = p_voltage;
     }
-    prev_voltage = p_voltage;
   }
-
     if (isValidFix()) {
 
   // GPS Speed
