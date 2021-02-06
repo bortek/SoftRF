@@ -492,6 +492,7 @@ static void OLED_other()
       prev_voltage = p_voltage;
     }
   }
+  
     if (isValidFix()) {
 
   // GPS Speed
