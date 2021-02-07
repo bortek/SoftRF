@@ -52,7 +52,7 @@ Adafruit_MPL3115A2 mpl3115a2 = Adafruit_MPL3115A2();
 static unsigned long BaroTimeMarker = 0;
 static float prev_pressure_altitude = 0;
 
-// increasing the averaging factor to average more data from sensor form 4 to 20
+// increasing the averaging factor to average more data from sensor form 4 to 10
 #define VS_AVERAGING_FACTOR   10
 static float Baro_VS[VS_AVERAGING_FACTOR];
 static int avg_ndx = 0;
