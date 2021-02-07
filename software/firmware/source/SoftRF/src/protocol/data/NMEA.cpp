@@ -129,10 +129,17 @@ void NMEA_loop()
     NMEA_Out(settings->nmea_out, (byte *) NMEABuffer, strlen(NMEABuffer), false);
 
 #if !defined(EXCLUDE_LK8EX1)
+  if(hw_info.model == SOFTRF_MODEL_DONGLE){
+    snprintf_P(NMEABuffer, sizeof(NMEABuffer), PSTR("$LK8EX1,999999,%d,%d,99,999,*"),
+            constrain((int) (ThisAircraft.pressure_altitude),-1000, 99998), /* meters */
+            (int) ((ThisAircraft.vs * 100) / (_GPS_FEET_PER_METER * 60)) /* cm/s */
+            );
+  }else{
     snprintf_P(NMEABuffer, sizeof(NMEABuffer), PSTR("$LK8EX1,999999,%d,%d,99,%.1f*"),
             constrain((int) (ThisAircraft.pressure_altitude),-1000, 99998), /* meters */
             (int) ((ThisAircraft.vs * 100) / (_GPS_FEET_PER_METER * 60)), /* cm/s */
             Battery_voltage());
+  }
 
     NMEA_add_checksum(NMEABuffer, sizeof(NMEABuffer) - strlen(NMEABuffer));
 
