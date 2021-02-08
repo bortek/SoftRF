@@ -45,20 +45,10 @@ const char EPD_SkyView_text9[] = "(C) 2019-2021";
 unsigned long EPDTimeMarker = 0;
 bool EPD_display_frontpage = false;
 
-static int  EPD_view_mode = 0;
+static int EPD_view_mode = 0;
 static unsigned long EPD_anti_ghosting_timer = 0;
 
-void EPD_Clear_Screen()
-{
-  display->setFullWindow();
-
-  display->firstPage();
-  do
-  {
-    display->fillScreen(GxEPD_WHITE);
-  }
-  while (display->nextPage());
-}
+volatile int EPD_task_command = EPD_UPDATE_NONE;
 
 byte EPD_setup(bool splash_screen)
 {
@@ -85,6 +75,8 @@ byte EPD_setup(bool splash_screen)
 
   display->setRotation(0);
   display->setTextColor(GxEPD_BLACK);
+  display->setFullWindow();
+  display->fillScreen(GxEPD_WHITE);
 
   // first update should be full refresh
   if (splash_screen) {
@@ -92,11 +84,8 @@ byte EPD_setup(bool splash_screen)
 
     display->getTextBounds(EPD_SkyView_text1, 0, 0, &tbx1, &tby1, &tbw1, &tbh1);
     display->getTextBounds(EPD_SkyView_text2, 0, 0, &tbx2, &tby2, &tbw2, &tbh2);
-    display->setFullWindow();
-    display->firstPage();
-    do
+
     {
-      display->fillScreen(GxEPD_WHITE);
       uint16_t x = (display->width() - tbw1) / 2;
       uint16_t y = (display->height() + tbh1) / 2;
       display->setCursor(x - (tbw1 / 3), y - tbh1);
@@ -129,10 +118,9 @@ byte EPD_setup(bool splash_screen)
         display->print(EPD_SkyView_text5);
       }
     }
-    while (display->nextPage());
-  } else {
-    EPD_Clear_Screen();
   }
+
+  display->display(false);
 
   if (display->epd2.probe()) {
     rval = DISPLAY_EPD_2_7;
@@ -150,18 +138,6 @@ byte EPD_setup(bool splash_screen)
 void EPD_loop()
 {
   if (hw_info.display == DISPLAY_EPD_2_7) {
-
-    switch (EPD_view_mode)
-    {
-    case VIEW_MODE_RADAR:
-      EPD_radar_loop();
-      break;
-    case VIEW_MODE_TEXT:
-      EPD_text_loop();
-      break;
-    default:
-      break;
-    }
 
     switch (settings->aghost)
     {
@@ -194,18 +170,38 @@ void EPD_loop()
     default:
       break;
     }
+
+    if (!EPD_display_frontpage) {
+      if (SoC->EPD_is_ready()) {
+        display->fillScreen(GxEPD_WHITE);
+        SoC->EPD_update(EPD_UPDATE_SLOW);
+
+        EPD_display_frontpage = true;
+      }
+    } else {
+      switch (EPD_view_mode)
+      {
+      case VIEW_MODE_RADAR:
+        EPD_radar_loop();
+        break;
+      case VIEW_MODE_TEXT:
+        EPD_text_loop();
+        break;
+      default:
+        break;
+      }
+    }
   }
 }
 
 void EPD_fini(const char *msg)
 {
+  SoC->EPD_fini();
+
   if (hw_info.display == DISPLAY_EPD_2_7) {
     int16_t  tbx, tby;
     uint16_t tbw, tbh;
 
-    display->setFullWindow();
-    display->firstPage();
-    do
     {
       display->fillScreen(GxEPD_WHITE);
       uint16_t x = (display->width()  - 128) / 2;
@@ -246,7 +242,7 @@ void EPD_fini(const char *msg)
       display->setCursor(x, y);
       display->print(EPD_SkyView_text9);
     }
-    while (display->nextPage());
+    display->display(false);
 
     display->hibernate();
   }
@@ -314,5 +310,36 @@ void EPD_Message(const char *msg1, const char *msg2)
     default:
       break;
     }
+  }
+}
+
+void EPD_Update_Sync(int cmd)
+{
+  switch (cmd)
+  {
+  case EPD_UPDATE_SLOW:
+    display->display(false);
+    EPD_task_command = EPD_UPDATE_NONE;
+    break;
+  case EPD_UPDATE_FAST:
+    display->display(true);
+    yield();
+    display->powerOff();
+    EPD_task_command = EPD_UPDATE_NONE;
+    break;
+  case EPD_UPDATE_NONE:
+  default:
+    break;
+  }
+}
+
+void EPD_Task( void * pvParameters )
+{
+  for( ;; )
+  {
+    if (hw_info.display == DISPLAY_EPD_2_7) {
+      EPD_Update_Sync(EPD_task_command);
+    }
+    yield();
   }
 }
