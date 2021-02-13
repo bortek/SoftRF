@@ -62,8 +62,8 @@ static int32_t prev_vario = (int) -1;
 #define Vario_AVERAGING_FACTOR 5
 static float Vario_VS[Vario_AVERAGING_FACTOR];
 static int vario_ndx = 0;
-float MAX_V = 4.2;
-float MIN_V = 3.5;
+float MAX_V = 4.1;
+float MIN_V = 3.6;
 
 /* Martenz Edits - end */
 
@@ -481,13 +481,13 @@ static void OLED_other()
   // Battery
   if (hw_info.model == SOFTRF_MODEL_PRIME_MK2 ){
      
-    int32_t  p_voltage      = (int) ( (1 - (MAX_V*100. - ceil(Battery_voltage()*100.))/(100.*(MAX_V - MIN_V))) * 100.0 );
+    int32_t  p_voltage      = (int) ( (1 - max(0., (MAX_V*100. - ceil(Battery_voltage()*100.)))/(100.*(MAX_V - MIN_V))) * 100.0 );
     if (prev_voltage != p_voltage) {    
       itoa(p_voltage, buf, 10);
       if (p_voltage < 100) {
       u8x8->drawString(14, 0, buf);
       }else{
-      u8x8->draw2x2String(13, 0, buf);
+      u8x8->drawString(13, 0, buf);
       }
       prev_voltage = p_voltage;
     }
