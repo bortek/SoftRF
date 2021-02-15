@@ -485,7 +485,7 @@ static void OLED_other()
     if (prev_voltage != p_voltage) {    
       itoa(p_voltage, buf, 10);
       if (p_voltage < 100) {
-      u8x8->drawString(10, 0, " ");
+      u8x8->drawString(13, 0, " ");
       u8x8->drawString(14, 0, buf);
       }else{
       u8x8->drawString(13, 0, buf);
