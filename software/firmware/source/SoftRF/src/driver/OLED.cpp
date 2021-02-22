@@ -478,6 +478,9 @@ static void OLED_other()
   snprintf (buf, sizeof(buf), "%06X", ThisAircraft.addr);
   u8x8->drawString(3, 0, buf);
 
+  // Protocol
+  u8x8->drawString(11, 0, OLED_Protocol_ID[ThisAircraft.protocol]);
+
   // Battery
   if (hw_info.model == SOFTRF_MODEL_PRIME_MK2 ){
      
