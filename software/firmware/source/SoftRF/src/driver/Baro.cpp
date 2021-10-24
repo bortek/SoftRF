@@ -20,7 +20,7 @@
 
 #include "Baro.h"
 
-#if defined(EXCLUDE_BMP180) && defined(EXCLUDE_BMP280) && defined(EXCLUDE_MPL3115A2)
+#if defined(EXCLUDE_BMP180) && defined(EXCLUDE_BMP280) && defined(EXCLUDE_MPL3115A2) && defined(EXCLUDE_MS5611)
 byte Baro_setup()    {return BARO_MODULE_NONE;}
 void Baro_loop()     {}
 #else
@@ -34,6 +34,9 @@ void Baro_loop()     {}
 #if !defined(EXCLUDE_MPL3115A2)
 #include <Adafruit_MPL3115A2.h>
 #endif /* EXCLUDE_MPL3115A2 */
+#if !defined(EXCLUDE_MS5611)
+#include <MS5x.h>
+#endif /* EXCLUDE_MS5611 */
 
 #include <TinyGPS++.h>
 
@@ -48,6 +51,9 @@ Adafruit_BMP280 bmp280;
 #if !defined(EXCLUDE_MPL3115A2)
 Adafruit_MPL3115A2 mpl3115a2 = Adafruit_MPL3115A2();
 #endif /* EXCLUDE_MPL3115A2 */
+#if !defined(EXCLUDE_MS5611)
+MS5x ms5611(&Wire);
+#endif /* EXCLUDE_MS5611 */
 
 static unsigned long BaroTimeMarker = 0;
 static float prev_pressure_altitude = 0;
@@ -192,6 +198,44 @@ barochip_ops_t mpl3115a2_ops = {
 };
 #endif /* EXCLUDE_MPL3115A2 */
 
+#if !defined(EXCLUDE_MS5611)
+static bool ms5611_probe()
+{
+  return ms5611.connect();
+}
+
+static void ms5611_setup()
+{
+  float pascals = ms5611.GetPres();
+  // Our weather page presents pressure in Inches (Hg)
+  // Use http://www.onlineconversion.com/pressure.htm for other units
+  Serial.print(pascals/3377); Serial.println(F(" Inches (Hg)"));
+
+  float altm = ms5611.getAltitude();
+  Serial.print(altm); Serial.println(F(" meters"));
+
+  float tempC = ms5611.GetTemp();
+  Serial.print(tempC); Serial.println(F("*C"));
+  
+  delay(250);
+  
+}
+
+static float ms5611_altitude(float sealevelPressure)
+{
+  //ms5611.setSeaPressure(sealevelPressure * 100);
+  return ms5611.getAltitude();
+}
+
+barochip_ops_t ms5611_ops = {
+  BARO_MODULE_MS5611,
+  "MS5611",
+  ms5611_probe,
+  ms5611_setup,
+  ms5611_altitude
+};
+#endif /* EXCLUDE_MS5611 */
+
 bool Baro_probe()
 {
   return (
@@ -206,6 +250,12 @@ bool Baro_probe()
 #else
            false                                            ||
 #endif /* EXCLUDE_BMP280 */
+
+#if !defined(EXCLUDE_MS5611)
+           (baro_chip = &ms5611_ops,    baro_chip->probe()) ||
+#else
+           false                                            ||
+#endif /* EXCLUDE_MS5611 */
 
 #if !defined(EXCLUDE_MPL3115A2)
            (baro_chip = &mpl3115a2_ops, baro_chip->probe())
@@ -274,4 +324,4 @@ void Baro_loop()
   }
 }
 
-#endif /* EXCLUDE_BMP180 && EXCLUDE_BMP280 EXCLUDE_MPL3115A2 */
+#endif /* EXCLUDE_BMP180 && EXCLUDE_BMP280 && EXCLUDE_MPL3115A2 && EXCLUDE_MS5611 */
