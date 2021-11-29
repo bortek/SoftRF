@@ -1,6 +1,50 @@
 /*
- * BaroHelper.cpp
- * Copyright (C) 2018-2021 Linar Yusupov
+ * SoftRF(.ino) firmware
+ * Copyright (C) 2016-2021 Linar Yusupov
+ *
+ * Author: Linar Yusupov, linar.r.yusupov@gmail.com
+ *
+ * Web: http://github.com/lyusupov/SoftRF
+ *
+ * Credits:
+ *   Arduino core for ESP8266 is developed/supported by ESP8266 Community (support-esp8266@esp8266.com)
+ *   AVR/Arduino nRF905 Library/Driver is developed by Zak Kemble, contact@zakkemble.co.uk
+ *   flarm_decode is developed by Stanislaw Pusep, http://github.com/creaktive
+ *   Arduino Time Library is developed by Paul Stoffregen, http://github.com/PaulStoffregen
+ *   "Aircraft" and MAVLink Libraries are developed by Andy Little
+ *   TinyGPS++ and PString Libraries are developed by Mikal Hart
+ *   Adafruit NeoPixel Library is developed by Phil Burgess, Michael Miller and others
+ *   TrueRandom Library is developed by Peter Knight
+ *   IBM LMIC and Semtech Basic MAC frameworks for Arduino are maintained by Matthijs Kooijman
+ *   ESP8266FtpServer is developed by David Paiva
+ *   Lib_crc is developed by Lammert Bies
+ *   OGN library is developed by Pawel Jalocha
+ *   NMEA library is developed by Timur Sinitsyn, Tobias Simon, Ferry Huberts
+ *   ADS-B encoder C++ library is developed by yangbinbin (yangbinbin_ytu@163.com)
+ *   Arduino Core for ESP32 is developed by Hristo Gochkov
+ *   ESP32 BT SPP library is developed by Evandro Copercini
+ *   Adafruit BMP085 library is developed by Limor Fried and Ladyada
+ *   Adafruit BMP280 library is developed by Kevin Townsend
+ *   Adafruit MPL3115A2 library is developed by Limor Fried and Kevin Townsend
+ *   U8g2 monochrome LCD, OLED and eInk library is developed by Oliver Kraus
+ *   NeoPixelBus library is developed by Michael Miller
+ *   jQuery library is developed by JS Foundation
+ *   EGM96 data is developed by XCSoar team
+ *   BCM2835 C library is developed by Mike McCauley
+ *   SimpleNetwork library is developed by Dario Longobardi
+ *   ArduinoJson library is developed by Benoit Blanchon
+ *   Flashrom library is part of the flashrom.org project
+ *   Arduino Core for TI CC13X0 and CC13X2 is developed by Robert Wessels
+ *   EasyLink library is developed by Robert Wessels and Tony Cave
+ *   Dump978 library is developed by Oliver Jowett
+ *   FEC library is developed by Phil Karn
+ *   AXP202X library is developed by Lewis He
+ *   Arduino Core for STM32 is developed by Frederic Pillon
+ *   TFT library is developed by Bodmer
+ *   STM32duino Low Power and RTC libraries are developed by Wi6Labs
+ *   Basic MAC library is developed by Michael Kuyper
+ *   LowPowerLab SPIFlash library is maintained by Felix Rusu
+ *   Arduino core for ASR650x is developed by Aaron Lee (HelTec Automation)
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,312 +60,624 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "../system/SoC.h"
+#include "src/system/OTA.h"
+#include "src/system/Time.h"
+#include "src/driver/LED.h"
+#include "src/driver/GNSS.h"
+#include "src/driver/RF.h"
+#include "src/driver/Sound.h"
+#include "src/driver/EEPROM.h"
+#include "src/driver/Battery.h"
+#include "src/protocol/data/MAVLink.h"
+#include "src/protocol/data/GDL90.h"
+#include "src/protocol/data/NMEA.h"
+#include "src/protocol/data/D1090.h"
+#include "src/system/SoC.h"
+#include "src/driver/WiFi.h"
+#include "src/ui/Web.h"
+#include "src/driver/Baro.h"
+#include "src/TTNHelper.h"
+#include "src/TrafficHelper.h"
 
-#include "Baro.h"
+#if defined(ENABLE_AHRS)
+#include "src/driver/AHRS.h"
+#endif /* ENABLE_AHRS */
 
-#if defined(EXCLUDE_BMP180) && defined(EXCLUDE_BMP280) && defined(EXCLUDE_MPL3115A2) && defined(EXCLUDE_MS5611)
-byte Baro_setup()    {return BARO_MODULE_NONE;}
-void Baro_loop()     {}
-#else
+#if LOGGER_IS_ENABLED
+#include "src/system/Log.h"
+#endif /* LOGGER_IS_ENABLED */
 
-#if !defined(EXCLUDE_BMP180)
-#include <Adafruit_BMP085.h>
-#endif /* EXCLUDE_BMP180 */
-#if !defined(EXCLUDE_BMP280)
-#include <Adafruit_BMP280.h>
-#endif /* EXCLUDE_BMP280 */
-#if !defined(EXCLUDE_MPL3115A2)
-#include <Adafruit_MPL3115A2.h>
-#endif /* EXCLUDE_MPL3115A2 */
-#if !defined(EXCLUDE_MS5611)
-#include <MS5x.h>
-#endif /* EXCLUDE_MS5611 */
+#define DEBUG 0
+#define DEBUG_TIMING 0
 
-#include <TinyGPS++.h>
+#define isTimeToDisplay() (millis() - LEDTimeMarker     > 1000)
+#define isTimeToExport()  (millis() - ExportTimeMarker  > 1000)
 
-barochip_ops_t *baro_chip = NULL;
+ufo_t ThisAircraft;
 
-#if !defined(EXCLUDE_BMP180)
-Adafruit_BMP085 bmp180;
-#endif /* EXCLUDE_BMP180 */
-#if !defined(EXCLUDE_BMP280)
-Adafruit_BMP280 bmp280;
-#endif /* EXCLUDE_BMP280 */
-#if !defined(EXCLUDE_MPL3115A2)
-Adafruit_MPL3115A2 mpl3115a2 = Adafruit_MPL3115A2();
-#endif /* EXCLUDE_MPL3115A2 */
-#if !defined(EXCLUDE_MS5611)
-MS5x ms5611(&Wire);
-#endif /* EXCLUDE_MS5611 */
-
-static unsigned long BaroTimeMarker = 0;
-static float prev_pressure_altitude = 0;
-
-// increasing the averaging factor to average more data from sensor form 4 to 10
-#define VS_AVERAGING_FACTOR   10
-static float Baro_VS[VS_AVERAGING_FACTOR];
-static int avg_ndx = 0;
-
-/* 4 baro sensor readings per second */
-#define isTimeToBaro() ((millis() - BaroTimeMarker) > (1000 / VS_AVERAGING_FACTOR))
-
-#if !defined(EXCLUDE_BMP180)
-static bool bmp180_probe()
-{
-  return bmp180.begin();
-}
-
-static void bmp180_setup()
-{
-  Serial.print(F("Temperature = "));
-  Serial.print(bmp180.readTemperature());
-  Serial.println(F(" *C"));
-  
-  Serial.print(F("Pressure = "));
-  Serial.print(bmp180.readPressure());
-  Serial.println(F(" Pa"));
-  
-  // Calculate altitude assuming 'standard' barometric
-  // pressure of 1013.25 millibar = 101325 Pascal
-  Serial.print(F("Altitude = "));
-  Serial.print(bmp180.readAltitude());
-  Serial.println(F(" meters"));
-
-  Serial.print(F("Pressure at sealevel (calculated) = "));
-  Serial.print(bmp180.readSealevelPressure());
-  Serial.println(F(" Pa"));
-
-// you can get a more precise measurement of altitude
-// if you know the current sea level pressure which will
-// vary with weather and such. If it is 1015 millibars
-// that is equal to 101500 Pascals.
-  Serial.print(F("Real altitude = "));
-  Serial.print(bmp180.readAltitude(101500));
-  Serial.println(F(" meters"));
-  
-  Serial.println();
-  delay(500);
-}
-
-static float bmp180_altitude(float sealevelPressure)
-{
-  return bmp180.readAltitude(sealevelPressure * 100);
-}
-
-barochip_ops_t bmp180_ops = {
-  BARO_MODULE_BMP180,
-  "BMP180",
-  bmp180_probe,
-  bmp180_setup,
-  bmp180_altitude
+hardware_info_t hw_info = {
+  .model    = DEFAULT_SOFTRF_MODEL,
+  .revision = 0,
+  .soc      = SOC_NONE,
+  .rf       = RF_IC_NONE,
+  .gnss     = GNSS_MODULE_NONE,
+  .baro     = BARO_MODULE_NONE,
+  .display  = DISPLAY_NONE
 };
-#endif /* EXCLUDE_BMP180 */
 
-#if !defined(EXCLUDE_BMP280)
-static bool bmp280_probe()
+unsigned long LEDTimeMarker = 0;
+unsigned long ExportTimeMarker = 0;
+
+void setup()
 {
-  return (
-          bmp280.begin(BMP280_ADDRESS,     BMP280_CHIPID) ||
-          bmp280.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID) ||
-          bmp280.begin(BMP280_ADDRESS,     BME280_CHIPID) ||
-          bmp280.begin(BMP280_ADDRESS_ALT, BME280_CHIPID)
-         );
-}
+  rst_info *resetInfo;
 
-static void bmp280_setup()
-{
-    Serial.print(F("Temperature = "));
-    Serial.print(bmp280.readTemperature());
-    Serial.println(F(" *C"));
-    
-    Serial.print(F("Pressure = "));
-    Serial.print(bmp280.readPressure());
-    Serial.println(F(" Pa"));
+  hw_info.soc = SoC_setup(); // Has to be very first procedure in the execution order
 
-    Serial.print(F("Approx altitude = "));
-    Serial.print(bmp280.readAltitude(1013.25)); // this should be adjusted to your local forcase
-    Serial.println(F(" m"));
-    
-    Serial.println();
-    delay(500);
-}
+  resetInfo = (rst_info *) SoC->getResetInfoPtr();
 
-static float bmp280_altitude(float sealevelPressure)
-{
-    return bmp280.readAltitude(sealevelPressure);
-}
+  Serial.begin(SERIAL_OUT_BR, SERIAL_OUT_BITS);
 
-barochip_ops_t bmp280_ops = {
-  BARO_MODULE_BMP280,
-  "BMP280",
-  bmp280_probe,
-  bmp280_setup,
-  bmp280_altitude
-};
-#endif /* EXCLUDE_BMP280 */
-
-#if !defined(EXCLUDE_MPL3115A2)
-static bool mpl3115a2_probe()
-{
-  return mpl3115a2.begin();
-}
-
-static void mpl3115a2_setup()
-{
-  float pascals = mpl3115a2.getPressure();
-  // Our weather page presents pressure in Inches (Hg)
-  // Use http://www.onlineconversion.com/pressure.htm for other units
-  Serial.print(pascals/3377); Serial.println(F(" Inches (Hg)"));
-
-  float altm = mpl3115a2.getAltitude();
-  Serial.print(altm); Serial.println(F(" meters"));
-
-  float tempC = mpl3115a2.getTemperature();
-  Serial.print(tempC); Serial.println(F("*C"));
-
-  delay(250);
-}
-
-static float mpl3115a2_altitude(float sealevelPressure)
-{
-  mpl3115a2.setSeaPressure(sealevelPressure * 100);
-  return mpl3115a2.getAltitude();
-}
-
-barochip_ops_t mpl3115a2_ops = {
-  BARO_MODULE_MPL3115A2,
-  "MPL3115A2",
-  mpl3115a2_probe,
-  mpl3115a2_setup,
-  mpl3115a2_altitude
-};
-#endif /* EXCLUDE_MPL3115A2 */
-
-#if !defined(EXCLUDE_MS5611)
-static bool ms5611_probe()
-{
-  return ms5611.connect();
-}
-
-static void ms5611_setup()
-{
-  float pascals = ms5611.GetPres();
-  // Our weather page presents pressure in Inches (Hg)
-  // Use http://www.onlineconversion.com/pressure.htm for other units
-  Serial.print(pascals/3377); Serial.println(F(" Inches (Hg)"));
-
-  float altm = ms5611.getAltitude();
-  Serial.print(altm); Serial.println(F(" meters"));
-
-  float tempC = ms5611.GetTemp();
-  Serial.print(tempC); Serial.println(F("*C"));
-  
-  delay(250);
-  
-}
-
-static float ms5611_altitude(float sealevelPressure)
-{
-  //ms5611.setSeaPressure(sealevelPressure * 100);
-  return ms5611.getAltitude();
-}
-
-barochip_ops_t ms5611_ops = {
-  BARO_MODULE_MS5611,
-  "MS5611",
-  ms5611_probe,
-  ms5611_setup,
-  ms5611_altitude
-};
-#endif /* EXCLUDE_MS5611 */
-
-bool Baro_probe()
-{
-  return (
-#if !defined(EXCLUDE_BMP180)
-           (baro_chip = &bmp180_ops,    baro_chip->probe()) ||
-#else
-           false                                            ||
-#endif /* EXCLUDE_BMP180 */
-
-#if !defined(EXCLUDE_BMP280)
-           (baro_chip = &bmp280_ops,    baro_chip->probe()) ||
-#else
-           false                                            ||
-#endif /* EXCLUDE_BMP280 */
-
-#if !defined(EXCLUDE_MS5611)
-           (baro_chip = &ms5611_ops,    baro_chip->probe()) ||
-#else
-           false                                            ||
-#endif /* EXCLUDE_MS5611 */
-
-#if !defined(EXCLUDE_MPL3115A2)
-           (baro_chip = &mpl3115a2_ops, baro_chip->probe())
-#else
-           false
-#endif /* EXCLUDE_MPL3115A2 */
-         );
-}
-
-byte Baro_setup()
-{
-  if ( SoC->Baro_setup() && Baro_probe() ) {
-
-    Serial.print(baro_chip->name);
-    Serial.println(F(" barometric pressure sensor is detected."));
-
-    baro_chip->setup();
-
-    prev_pressure_altitude = baro_chip->altitude(1013.25);
-    BaroTimeMarker = millis();
-
-    for (int i=0; i<VS_AVERAGING_FACTOR; i++) {
-      Baro_VS[i] = 0;
-    }
-
-    return baro_chip->type;
-
-  } else {
-    baro_chip = NULL;
-    Serial.println(F("WARNING! Barometric pressure sensor is NOT detected."));
-
-    return BARO_MODULE_NONE;
-  }
-}
-
-void Baro_loop()
-{
-  if (baro_chip && isTimeToBaro()) {
-
-    /* Draft of pressure altitude and vertical speed calculation */
-    ThisAircraft.pressure_altitude = baro_chip->altitude(1013.25);
-
-    Baro_VS[avg_ndx] = (ThisAircraft.pressure_altitude - prev_pressure_altitude) /
-      (millis() - BaroTimeMarker) * 1000;  /* in m/s */
-
-    ThisAircraft.vs = 0;
-    for (int i=0; i<VS_AVERAGING_FACTOR; i++) {
-      ThisAircraft.vs += Baro_VS[i];
-    }
-    ThisAircraft.vs /= VS_AVERAGING_FACTOR;
-
-    if (ThisAircraft.vs > -0.1 && ThisAircraft.vs < 0.1) {
-      ThisAircraft.vs = 0;
-    }
-
-    ThisAircraft.vs *= (_GPS_FEET_PER_METER * 60.0) ; /* feet per minute */
-
-    prev_pressure_altitude = ThisAircraft.pressure_altitude;
-    BaroTimeMarker = millis();
-    avg_ndx = (avg_ndx + 1) % VS_AVERAGING_FACTOR;
-
-#if 0
-    Serial.print(F("P.Alt. = ")); Serial.print(ThisAircraft.pressure_altitude);
-    Serial.print(F(" , VS avg. = ")); Serial.println(ThisAircraft.vs);
+#if defined(USBD_USE_CDC) && !defined(DISABLE_GENERIC_SERIALUSB)
+  /* Let host's USB and console drivers to warm-up */
+  delay(2000);
+#elif defined(USE_TINYUSB) && defined(USBCON)
+  for (int i=0; i < 20; i++) {if (Serial) break; else delay(100);}
 #endif
+
+#if LOGGER_IS_ENABLED
+  Logger_setup();
+#endif /* LOGGER_IS_ENABLED */
+
+  Serial.println();
+  Serial.print(F(SOFTRF_IDENT));
+  Serial.print(SoC->name);
+  Serial.print(F(" FW.REV: " SOFTRF_FIRMWARE_VERSION " DEV.ID: "));
+  Serial.println(String(SoC->getChipId(), HEX));
+  Serial.println(F("Copyright (C) 2015-2021 Linar Yusupov. All rights reserved."));
+  Serial.flush();
+
+  if (resetInfo) {
+    Serial.println(""); Serial.print(F("Reset reason: ")); Serial.println(resetInfo->reason);
   }
+  Serial.println(SoC->getResetReason());
+  Serial.print(F("Free heap size: ")); Serial.println(SoC->getFreeHeap());
+  Serial.println(SoC->getResetInfo()); Serial.println("");
+
+  EEPROM_setup();
+
+  SoC->Button_setup();
+
+  ThisAircraft.addr = SoC->getChipId() & 0x00FFFFFF;
+
+  hw_info.rf = RF_setup();
+
+  delay(100);
+
+  hw_info.baro = Baro_setup();
+#if defined(ENABLE_AHRS)
+  hw_info.ahrs = AHRS_setup();
+#endif /* ENABLE_AHRS */
+  hw_info.display = SoC->Display_setup();
+
+#if !defined(EXCLUDE_MAVLINK)
+  if (settings->mode == SOFTRF_MODE_UAV) {
+    Serial.begin(57600);
+    MAVLink_setup();
+    ThisAircraft.aircraft_type = AIRCRAFT_TYPE_UAV;  
+  }  else
+#endif /* EXCLUDE_MAVLINK */
+  {
+    hw_info.gnss = GNSS_setup();
+    ThisAircraft.aircraft_type = settings->aircraft_type;
+  }
+  ThisAircraft.protocol = settings->rf_protocol;
+  ThisAircraft.stealth  = settings->stealth;
+  ThisAircraft.no_track = settings->no_track;
+
+  Battery_setup();
+  Traffic_setup();
+
+  SoC->swSer_enableRx(false);
+
+  LED_setup();
+
+  WiFi_setup();
+
+  if (SoC->USB_ops) {
+     SoC->USB_ops->setup();
+  }
+
+  if (SoC->Bluetooth_ops) {
+     SoC->Bluetooth_ops->setup();
+  }
+
+  OTA_setup();
+  Web_setup();
+  NMEA_setup();
+
+#if defined(ENABLE_TTN)
+  TTN_setup();
+#endif
+
+  delay(1000);
+
+  /* expedite restart on WDT reset */
+  if (resetInfo->reason != REASON_WDT_RST) {
+    LED_test();
+  }
+
+  SoC->Sound_test(resetInfo->reason);
+
+  switch (settings->mode)
+  {
+  case SOFTRF_MODE_TXRX_TEST:
+  case SOFTRF_MODE_WATCHOUT:
+    Time_setup();
+    break;
+  case SOFTRF_MODE_BRIDGE:
+    break;
+  case SOFTRF_MODE_NORMAL:
+  case SOFTRF_MODE_UAV:
+  default:
+    SoC->swSer_enableRx(true);
+    break;
+  }
+
+  SoC->post_init();
+
+  SoC->WDT_setup();
 }
 
-#endif /* EXCLUDE_BMP180 && EXCLUDE_BMP280 && EXCLUDE_MPL3115A2 && EXCLUDE_MS5611 */
+void loop()
+{
+  // Do common RF stuff first
+  RF_loop();
+
+  switch (settings->mode)
+  {
+#if !defined(EXCLUDE_TEST_MODE)
+  case SOFTRF_MODE_TXRX_TEST:
+    txrx_test();
+    break;
+#endif /* EXCLUDE_TEST_MODE */
+#if !defined(EXCLUDE_MAVLINK)
+  case SOFTRF_MODE_UAV:
+    uav();
+    break;
+#endif /* EXCLUDE_MAVLINK */
+#if !defined(EXCLUDE_WIFI)
+  case SOFTRF_MODE_BRIDGE:
+    bridge();
+    break;
+#endif /* EXCLUDE_WIFI */
+#if !defined(EXCLUDE_WATCHOUT_MODE)
+  case SOFTRF_MODE_WATCHOUT:
+    watchout();
+    break;
+#endif /* EXCLUDE_WATCHOUT_MODE */
+  case SOFTRF_MODE_NORMAL:
+  default:
+    normal();
+    break;
+  }
+
+  // Show status info on tiny OLED display
+  SoC->Display_loop();
+
+  // battery status LED
+  LED_loop();
+
+  // Handle DNS
+  WiFi_loop();
+
+  // Handle Web
+  Web_loop();
+
+  // Handle OTA update.
+  OTA_loop();
+
+#if LOGGER_IS_ENABLED
+  Logger_loop();
+#endif /* LOGGER_IS_ENABLED */
+
+  SoC->loop();
+
+  if (SoC->Bluetooth_ops) {
+    SoC->Bluetooth_ops->loop();
+  }
+
+  if (SoC->USB_ops) {
+    SoC->USB_ops->loop();
+  }
+
+  if (SoC->UART_ops) {
+     SoC->UART_ops->loop();
+  }
+
+  Battery_loop();
+
+  SoC->Button_loop();
+
+#if defined(TAKE_CARE_OF_MILLIS_ROLLOVER)
+  /* restart the device when uptime is more than 47 days */
+  if (millis() > (47 * 24 * 3600 * 1000UL)) {
+    SoC->reset();
+  }
+#endif /* TAKE_CARE_OF_MILLIS_ROLLOVER */
+
+  yield();
+}
+
+void shutdown(int reason)
+{
+  SoC->WDT_fini();
+
+  SoC->swSer_enableRx(false);
+
+  NMEA_fini();
+
+  Web_fini();
+
+  if (SoC->Bluetooth_ops) {
+     SoC->Bluetooth_ops->fini();
+  }
+
+  if (SoC->USB_ops) {
+     SoC->USB_ops->fini();
+  }
+
+  WiFi_fini();
+
+  if (settings->mode != SOFTRF_MODE_UAV) {
+    GNSS_fini();
+  }
+
+  SoC->Display_fini(reason);
+
+  RF_Shutdown();
+
+  SoC->Button_fini();
+
+  SoC_fini(reason);
+}
+
+void normal()
+{
+  bool success;
+
+  Baro_loop();
+
+#if defined(ENABLE_AHRS)
+  AHRS_loop();
+#endif /* ENABLE_AHRS */
+
+  GNSS_loop();
+
+  ThisAircraft.timestamp = now();
+  if (isValidFix()) {
+    ThisAircraft.latitude = gnss.location.lat();
+    ThisAircraft.longitude = gnss.location.lng();
+    ThisAircraft.altitude = gnss.altitude.meters();
+    ThisAircraft.course = gnss.course.deg();
+    ThisAircraft.speed = gnss.speed.knots();
+    ThisAircraft.hdop = (uint16_t) gnss.hdop.value();
+    ThisAircraft.geoid_separation = gnss.separation.meters();
+
+#if !defined(EXCLUDE_EGM96)
+    /*
+     * When geoidal separation is zero or not available - use approx. EGM96 value
+     */
+    if (ThisAircraft.geoid_separation == 0.0) {
+      ThisAircraft.geoid_separation = (float) LookupSeparation(
+                                                ThisAircraft.latitude,
+                                                ThisAircraft.longitude
+                                              );
+      /* we can assume the GPS unit is giving ellipsoid height */
+      ThisAircraft.altitude -= ThisAircraft.geoid_separation;
+    }
+#endif /* EXCLUDE_EGM96 */
+
+    RF_Transmit(RF_Encode(&ThisAircraft), true);
+  }
+
+  success = RF_Receive();
+
+#if DEBUG
+  success = true;
+#endif
+
+  if (success && isValidFix()) ParseData();
+
+#if defined(ENABLE_TTN)
+  TTN_loop();
+#endif
+
+  if (isValidFix()) {
+    Traffic_loop();
+  }
+
+  if (isTimeToDisplay()) {
+    if (isValidFix()) {
+      LED_DisplayTraffic();
+    } else {
+      LED_Clear();
+    }
+    LEDTimeMarker = millis();
+  }
+
+  if (isTimeToExport()) {
+    NMEA_Export();
+    GDL90_Export();
+
+    if (isValidFix()) {
+      D1090_Export();
+    }
+    ExportTimeMarker = millis();
+  }
+
+  // Handle Air Connect
+  NMEA_loop();
+
+  ClearExpired();
+
+}
+
+#if !defined(EXCLUDE_MAVLINK)
+void uav()
+{
+  bool success = false;
+
+  PickMAVLinkFix();
+
+  MAVLinkTimeSync();
+  MAVLinkSetWiFiPower();
+
+  ThisAircraft.timestamp = now();
+
+  if (isValidMAVFix()) {
+    ThisAircraft.latitude = the_aircraft.location.gps_lat / 1e7;
+    ThisAircraft.longitude = the_aircraft.location.gps_lon / 1e7;
+    ThisAircraft.altitude = the_aircraft.location.gps_alt / 1000.0;
+    ThisAircraft.course = the_aircraft.location.gps_cog;
+    ThisAircraft.speed = (the_aircraft.location.gps_vog / 100.0) / _GPS_MPS_PER_KNOT;
+    ThisAircraft.pressure_altitude = the_aircraft.location.baro_alt;
+    ThisAircraft.hdop = the_aircraft.location.gps_hdop;
+
+    RF_Transmit(RF_Encode(&ThisAircraft), true);
+  }
+
+  success = RF_Receive();
+
+  if (success && isValidMAVFix()) ParseData();
+
+  if (isTimeToExport() && isValidMAVFix()) {
+    MAVLinkShareTraffic();
+    ExportTimeMarker = millis();
+  }
+
+  ClearExpired();
+}
+#endif /* EXCLUDE_MAVLINK */
+
+#if !defined(EXCLUDE_WIFI)
+void bridge()
+{
+  bool success;
+
+  size_t tx_size = Raw_Receive_UDP(&TxBuffer[0]);
+
+  if (tx_size > 0) {
+    RF_Transmit(tx_size, true);
+  }
+
+  success = RF_Receive();
+
+  if(success)
+  {
+    size_t rx_size = RF_Payload_Size(settings->rf_protocol);
+    rx_size = rx_size > sizeof(fo.raw) ? sizeof(fo.raw) : rx_size;
+
+    memset(fo.raw, 0, sizeof(fo.raw));
+    memcpy(fo.raw, RxBuffer, rx_size);
+
+    if (settings->nmea_p) {
+      StdOut.print(F("$PSRFI,"));
+      StdOut.print((unsigned long) now());    StdOut.print(F(","));
+      StdOut.print(Bin2Hex(fo.raw, rx_size)); StdOut.print(F(","));
+      StdOut.println(RF_last_rssi);
+    }
+
+    Raw_Transmit_UDP();
+  }
+
+  if (isTimeToDisplay()) {
+    LED_Clear();
+    LEDTimeMarker = millis();
+  }
+}
+#endif /* EXCLUDE_WIFI */
+
+#if !defined(EXCLUDE_WATCHOUT_MODE)
+void watchout()
+{
+  bool success;
+
+  success = RF_Receive();
+
+  if (success) {
+    size_t rx_size = RF_Payload_Size(settings->rf_protocol);
+    rx_size = rx_size > sizeof(fo.raw) ? sizeof(fo.raw) : rx_size;
+
+    memset(fo.raw, 0, sizeof(fo.raw));
+    memcpy(fo.raw, RxBuffer, rx_size);
+
+    if (settings->nmea_p) {
+      StdOut.print(F("$PSRFI,"));
+      StdOut.print((unsigned long) now());    StdOut.print(F(","));
+      StdOut.print(Bin2Hex(fo.raw, rx_size)); StdOut.print(F(","));
+      StdOut.println(RF_last_rssi);
+    }
+  }
+
+  if (isTimeToDisplay()) {
+    LED_Clear();
+    LEDTimeMarker = millis();
+  }
+}
+#endif /* EXCLUDE_WATCHOUT_MODE */
+
+#if !defined(EXCLUDE_TEST_MODE)
+
+unsigned int pos_ndx = 0;
+unsigned long TxPosUpdMarker = 0;
+
+void txrx_test()
+{
+  bool success = false;
+#if DEBUG_TIMING
+  unsigned long baro_start_ms, baro_end_ms;
+  unsigned long tx_start_ms, tx_end_ms, rx_start_ms, rx_end_ms;
+  unsigned long parse_start_ms, parse_end_ms, led_start_ms, led_end_ms;
+  unsigned long export_start_ms, export_end_ms;
+  unsigned long oled_start_ms, oled_end_ms;
+#endif
+  ThisAircraft.timestamp = now();
+
+  if (TxPosUpdMarker == 0 || (millis() - TxPosUpdMarker) > 4000 ) {
+    ThisAircraft.latitude =  pgm_read_float( &txrx_test_positions[pos_ndx][0]);
+    ThisAircraft.longitude =  pgm_read_float( &txrx_test_positions[pos_ndx][1]);
+    pos_ndx = (pos_ndx + 1) % TXRX_TEST_NUM_POSITIONS;
+    TxPosUpdMarker = millis();
+  }
+  ThisAircraft.altitude = TXRX_TEST_ALTITUDE;
+  ThisAircraft.course = TXRX_TEST_COURSE;
+  ThisAircraft.speed = TXRX_TEST_SPEED;
+  ThisAircraft.vs = TXRX_TEST_VS;
+
+#if DEBUG_TIMING
+  baro_start_ms = millis();
+#endif
+  Baro_loop();
+#if DEBUG_TIMING
+  baro_end_ms = millis();
+#endif
+
+#if defined(ENABLE_AHRS)
+  AHRS_loop();
+#endif /* ENABLE_AHRS */
+
+#if DEBUG_TIMING
+  tx_start_ms = millis();
+#endif
+  RF_Transmit(RF_Encode(&ThisAircraft), true);
+#if DEBUG_TIMING
+  tx_end_ms = millis();
+  rx_start_ms = millis();
+#endif
+  success = RF_Receive();
+#if DEBUG_TIMING
+  rx_end_ms = millis();
+#endif
+
+#if DEBUG_TIMING
+  parse_start_ms = millis();
+#endif
+  if (success) ParseData();
+#if DEBUG_TIMING
+  parse_end_ms = millis();
+#endif
+
+#if defined(ENABLE_TTN)
+  TTN_loop();
+#endif
+
+  Traffic_loop();
+
+#if DEBUG_TIMING
+  led_start_ms = millis();
+#endif
+  if (isTimeToDisplay()) {
+    LED_DisplayTraffic();
+    LEDTimeMarker = millis();
+  }
+#if DEBUG_TIMING
+  led_end_ms = millis();
+#endif
+
+#if DEBUG_TIMING
+  export_start_ms = millis();
+#endif
+  if (isTimeToExport()) {
+#if defined(USE_NMEALIB)
+    NMEA_Position();
+#endif
+    NMEA_Export();
+    GDL90_Export();
+    D1090_Export();
+    ExportTimeMarker = millis();
+  }
+#if DEBUG_TIMING
+  export_end_ms = millis();
+#endif
+
+#if DEBUG_TIMING
+  oled_start_ms = millis();
+#endif
+//  SoC->Display_loop();
+#if DEBUG_TIMING
+  oled_end_ms = millis();
+#endif
+
+#if DEBUG_TIMING
+  if (baro_start_ms - baro_end_ms) {
+    Serial.print(F("Baro start: "));
+    Serial.print(baro_start_ms);
+    Serial.print(F(" Baro stop: "));
+    Serial.println(baro_end_ms);
+  }
+  if (tx_end_ms - tx_start_ms) {
+    Serial.print(F("TX start: "));
+    Serial.print(tx_start_ms);
+    Serial.print(F(" TX stop: "));
+    Serial.println(tx_end_ms);
+  }
+  if (rx_end_ms - rx_start_ms) {
+    Serial.print(F("RX start: "));
+    Serial.print(rx_start_ms);
+    Serial.print(F(" RX stop: "));
+    Serial.println(rx_end_ms);
+  }
+  if (parse_end_ms - parse_start_ms) {
+    Serial.print(F("Parse start: "));
+    Serial.print(parse_start_ms);
+    Serial.print(F(" Parse stop: "));
+    Serial.println(parse_end_ms);
+  }
+  if (led_end_ms - led_start_ms) {
+    Serial.print(F("LED start: "));
+    Serial.print(led_start_ms);
+    Serial.print(F(" LED stop: "));
+    Serial.println(led_end_ms);
+  }
+  if (export_end_ms - export_start_ms) {
+    Serial.print(F("Export start: "));
+    Serial.print(export_start_ms);
+    Serial.print(F(" Export stop: "));
+    Serial.println(export_end_ms);
+  }
+  if (oled_end_ms - oled_start_ms) {
+    Serial.print(F("OLED start: "));
+    Serial.print(oled_start_ms);
+    Serial.print(F(" OLED stop: "));
+    Serial.println(oled_end_ms);
+  }
+#endif
+
+  // Handle Air Connect
+  NMEA_loop();
+
+  ClearExpired();
+}
+
+#endif /* EXCLUDE_TEST_MODE */
